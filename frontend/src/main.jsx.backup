@@ -6,9 +6,6 @@ import {
   ShieldAlert, Square, Workflow, Monitor, Folder, File, Terminal, Brain, Layers, Wifi, Key, MousePointer2, Puzzle, Globe2
 } from 'lucide-react';
 import './styles.css';
-import './replay-engine-2.css';
-import ReplayEngine2 from './components/ReplayEngine2.jsx';
-import InteractiveDllViewer from './components/InteractiveDllViewer.jsx';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 const SPEEDS = { '0.5x': 1200, '1x': 650, '2x': 325, '4x': 150 };
@@ -298,7 +295,6 @@ function App() {
   const [activeTab, setActiveTab] = useState('timeline');
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
-  const [activeReplayEvent, setActiveReplayEvent] = useState(null);
 
   useEffect(() => {
     fetch(`${API}/samples`)
@@ -319,7 +315,18 @@ function App() {
       setActiveTab('timeline');
     }).catch(() => setError('Could not load sample data.'));
   }, [selectedId]);
-const displayedEvents = useMemo(() => sample?.events.slice(0, visibleEvents) || [], [sample, visibleEvents]);
+
+  useEffect(() => {
+    if (!playing || !sample) return;
+    if (visibleEvents >= sample.events.length) {
+      setPlaying(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setVisibleEvents((count) => count + 1), SPEEDS[speed]);
+    return () => window.clearTimeout(timer);
+  }, [playing, visibleEvents, sample, speed]);
+
+  const displayedEvents = useMemo(() => sample?.events.slice(0, visibleEvents) || [], [sample, visibleEvents]);
   const filteredSamples = useMemo(() => samples.filter((item) => `${item.name} ${item.category}`.toLowerCase().includes(query.toLowerCase())), [samples, query]);
   const progress = sample ? (visibleEvents / sample.events.length) * 100 : 0;
   const elapsed = displayedEvents.length ? eventSeconds(displayedEvents.at(-1).timestamp) : 0;
@@ -375,16 +382,22 @@ const displayedEvents = useMemo(() => sample?.events.slice(0, visibleEvents) || 
           </div>
         </section>
 
-        <ReplayEngine2
-          events={sample.events}
-          visibleEvents={visibleEvents}
-          setVisibleEvents={setVisibleEvents}
-          playing={playing}
-          setPlaying={setPlaying}
-          speed={speed}
-          setSpeed={setSpeed}
-          onActiveEvent={setActiveReplayEvent}
-        />
+        <section className="control-row">
+          <button className="primary" onClick={() => setPlaying(!playing)} disabled={visibleEvents === sample.events.length}>
+            {playing ? <CirclePause size={17}/> : <Play size={17}/>} {playing ? 'PAUSE' : visibleEvents ? 'RESUME' : 'RUN REPLAY'}
+          </button>
+          <button onClick={() => { setVisibleEvents(0); setPlaying(false); }}><RotateCcw size={17}/> RESET</button>
+          <button onClick={() => { setVisibleEvents(sample.events.length); setPlaying(false); }}><Square size={15}/> COMPLETE</button>
+          <a href={`${API}/samples/${selectedId}/report.md`}><Download size={17}/> REPORT</a>
+          <select value={speed} onChange={(event) => setSpeed(event.target.value)} aria-label="Replay speed">
+            {Object.keys(SPEEDS).map((option) => <option key={option}>{option}</option>)}
+          </select>
+          <div className="progress-wrap">
+            <input type="range" min="0" max={sample.events.length} value={visibleEvents} onChange={(event) => { setVisibleEvents(Number(event.target.value)); setPlaying(false); }}/>
+            <div className="progress"><span style={{width: `${progress}%`}}/></div>
+            <time>{formatClock(elapsed)} / {formatClock(totalTime)}</time>
+          </div>
+        </section>
 
         <section className="stats-grid">
           <article className="card stat"><Activity/><span>EVENTS</span><strong>{visibleEvents}/{sample.events.length}</strong></article>
@@ -431,15 +444,7 @@ const displayedEvents = useMemo(() => sample?.events.slice(0, visibleEvents) || 
               <div className="timeline">
                 {!displayedEvents.length && <div className="empty"><Activity size={28}/><span>Press RUN REPLAY to begin analysis.</span></div>}
                 {displayedEvents.map((event) => (
-                  <div
-                    className={`timeline-event ${
-                      (activeReplayEvent || latestEvent)?.id === event.id
-                        ? 'replay-cross-highlight'
-                        : ''
-                    }`}
-                    key={event.id}
-                    onClick={() => setActiveReplayEvent(event)}
-                  >
+                  <div className="timeline-event" key={event.id}>
                     <time>{event.timestamp}</time>
                     <span className="node"/>
                     <div><div className="event-head"><strong>{event.action}</strong><span className={severityClass(event.severity)}>{event.severity}</span></div><code>{event.target}</code><p>{event.process} {event.pid ? `• PID ${event.pid}` : ''}</p></div>
@@ -453,18 +458,7 @@ const displayedEvents = useMemo(() => sample?.events.slice(0, visibleEvents) || 
             {activeTab === 'files' && <ArtifactExplorer events={displayedEvents} mode="files"/>}
             {activeTab === 'registry' && <ArtifactExplorer events={displayedEvents} mode="registry"/>}
             {activeTab === 'memory' && <MemoryView events={displayedEvents}/>}
-            {activeTab === 'dlls' && (
-              <InteractiveDllViewer
-                events={displayedEvents}
-                sample={sample}
-                activeEvent={activeReplayEvent || latestEvent}
-                onCrossHighlight={(selection) => {
-                  if (selection.tab) {
-                    setActiveTab(selection.tab);
-                  }
-                }}
-              />
-            )}
+            {activeTab === 'dlls' && <DllViewer events={displayedEvents} sample={sample}/>}
             {activeTab === 'attack' && <AttackMatrix techniques={summary.techniques} activeEvents={displayedEvents}/>}
           </article>
 
